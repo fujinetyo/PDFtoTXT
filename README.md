@@ -12,6 +12,7 @@ PDFファイルの指定ページからテキストを抽出する CLI ツール
 - 抽出したテキストを `<元PDF名>-<ページ番号>.txt` 形式で保存
 - 日本語を含む実行結果のログ出力
 - 詳細なエラーメッセージとエラーハンドリング
+- **新機能**: 画像PDF（テキスト層なし）からOCRでテキストを自動抽出
 - **新機能**: PDFページを画像に変換し、画像PDFとして再構成する機能
 
 ## 必要環境
@@ -54,6 +55,37 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### 5. Tesseract OCRエンジンのインストール（画像PDFからテキストを抽出する場合）
+
+画像形式のPDF（テキスト層を持たないPDF）からテキストを抽出する場合は、Tesseract OCRエンジンのインストールが必要です。
+
+**macOS の場合:**
+
+```bash
+brew install tesseract
+brew install tesseract-lang  # 日本語を含む追加言語パック
+```
+
+**Ubuntu / Debian の場合:**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-jpn
+```
+
+**Windows の場合:**
+
+1. [Tesseract at UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki) から Windows版インストーラーをダウンロード
+2. インストール時に「Additional language data」で「Japanese」を選択
+3. インストール後、環境変数PATHにTesseractのインストールパスを追加
+
+**インストール確認:**
+
+```bash
+tesseract --version
+tesseract --list-langs  # jpn が表示されることを確認
+```
+
 ## 使い方
 
 ### 基本的な使用方法
@@ -64,17 +96,25 @@ python pdf_page_text.py --pdf <PDFファイルパス> --page <ページ番号> [
 
 ### 抽出エンジンについて
 
-このツールは2つのテキスト抽出エンジンをサポートしています：
+このツールは3つのテキスト抽出エンジンをサポートしています：
 
 1. **pypdf**（デフォルト）
    - 純Python実装で、外部依存が少ない
    - 高速で一般的なPDFに対応
    - 一部のPDFでアキュート記号付き文字やアポストロフィが正しく抽出できない場合がある
+   - テキスト層がない場合は自動的にOCRにフォールバック
 
 2. **pdfminer**（`pdfminer.six` パッケージ）
    - より高度なPDF解析機能
    - 複雑なフォントエンコーディングやレイアウトに対応
    - pypdfで文字化けが発生する場合の代替手段として推奨
+   - テキスト層がない場合は自動的にOCRにフォールバック
+
+3. **ocr**（Tesseract OCRエンジン）
+   - 画像形式のPDF（テキスト層を持たないPDF）からテキストを抽出
+   - 日本語と英語の両方に対応（jpn+eng）
+   - Tesseract OCRエンジンのインストールが必要
+   - pypdfやpdfminerでテキストが検出できない場合、自動的にOCRが実行されます
 
 ### エンジンの切り替え方法
 
@@ -108,13 +148,20 @@ INFO: 正常終了
 python pdf_page_text.py --pdf /path/to/documents/report.pdf --page 1
 ```
 
-#### 例3: pdfminer エンジンを使用してテキストを抽出
+#### 例3: OCRエンジンを使用して画像PDFからテキストを抽出
 
 ```bash
-python pdf_page_text.py --pdf ./accented.pdf --page 1 --engine pdfminer
+python pdf_page_text.py --pdf ./scanned_document.pdf --page 1 --engine ocr
 ```
 
-#### 例4: ヘルプの表示
+#### 例4: 自動OCRフォールバック（画像PDFの場合）
+
+```bash
+# テキスト層がない場合、自動的にOCRが実行されます
+python pdf_page_text.py --pdf ./image_based.pdf --page 1
+```
+
+#### 例5: ヘルプの表示
 
 ```bash
 python pdf_page_text.py --help
@@ -126,7 +173,7 @@ python pdf_page_text.py --help
 |------|------|------|
 | `--pdf <PDFファイルパス>` | ✓ | 抽出元のPDFファイルのパス（相対パスまたは絶対パス） |
 | `--page <ページ番号>` | ✓ | 抽出するページ番号（1始まり） |
-| `--engine <エンジン>` | | テキスト抽出エンジン（`pypdf` または `pdfminer`）。デフォルトは `pypdf`。文字化けが発生する場合は `pdfminer` を試してください。 |
+| `--engine <エンジン>` | | テキスト抽出エンジン（`pypdf`, `pdfminer`, または `ocr`）。デフォルトは `pypdf`。文字化けが発生する場合は `pdfminer` を試してください。画像PDFの場合は `ocr` を使用してください。テキスト層がない場合は自動的にOCRにフォールバックします。 |
 
 ## 出力
 
@@ -156,10 +203,10 @@ python pdf_page_text.py --help
 ## 制限事項
 
 1. **レイアウトの保持:** テキストのレイアウト（段組み、表形式など）は保持されません
-2. **画像内のテキスト:** 画像として埋め込まれたテキスト（OCRが必要なもの）は抽出できません
-3. **暗号化されたPDF:** パスワード保護されたPDFには対応していません
-4. **フォント:** 特殊なフォントや埋め込まれていないフォントの場合、正しく抽出できない可能性があります。その場合は代替エンジン（`--engine pdfminer`）を試してください。
-5. **改行・空白:** 元のPDFの改行や空白は適宜変換されます
+2. **暗号化されたPDF:** パスワード保護されたPDFには対応していません
+3. **フォント:** 特殊なフォントや埋め込まれていないフォントの場合、正しく抽出できない可能性があります。その場合は代替エンジン（`--engine pdfminer`）を試してください。
+4. **改行・空白:** 元のPDFの改行や空白は適宜変換されます
+5. **OCR精度:** OCR機能は画像の品質、フォントサイズ、背景ノイズなどによって精度が変動します。より高い精度が必要な場合は、元のPDFを高解像度（300 DPI以上）でスキャンしてください。
 
 ### 文字エンコーディングに関する注意事項
 
@@ -171,8 +218,10 @@ python pdf_page_text.py --help
 
 - **pypdf** (>=4.0.0): PDFファイルからのテキスト抽出（デフォルトエンジン）
 - **pdfminer.six** (>=20231228): 代替テキスト抽出エンジン（オプション）
-- **PyMuPDF** (>=1.24.0): PDF画像化機能用
-- **Pillow** (>=10.2.0): 画像処理・PDF生成用
+- **PyMuPDF** (>=1.24.0): PDF画像化機能用、OCR機能用
+- **Pillow** (>=10.2.0): 画像処理・PDF生成用、OCR機能用
+- **pytesseract** (>=0.3.10): OCR機能用（Python wrapper）
+- **Tesseract OCR**: OCRエンジン本体（システムレベルでのインストールが必要）
 
 詳細は `requirements.txt` を参照してください。
 
@@ -189,6 +238,10 @@ pip install pdfminer.six
 ```bash
 pip install -r requirements.txt
 ```
+
+### Tesseract OCRのインストール
+
+OCR機能を使用する場合は、Tesseract OCRエンジンのインストールが必要です。詳細は「セットアップ」セクションの「5. Tesseract OCRエンジンのインストール」を参照してください。
 
 ## 動作確認環境
 
@@ -232,6 +285,51 @@ pip install -r requirements.txt
    
    出力ファイルは常にUTF-8でエンコードされます。テキストエディタでファイルを開く際は、UTF-8エンコーディングを指定してください。
 
+### OCRが動作しない場合
+
+画像PDFからテキストを抽出できない場合：
+
+1. **Tesseractがインストールされているか確認**
+   
+   ```bash
+   tesseract --version
+   tesseract --list-langs  # jpn が表示されることを確認
+   ```
+   
+   インストールされていない場合は、「セットアップ」セクションの手順に従ってインストールしてください。
+
+2. **日本語言語パックがインストールされているか確認**
+   
+   `tesseract --list-langs` の出力に `jpn` が含まれていることを確認してください。
+   含まれていない場合は、日本語言語パックをインストールしてください：
+   
+   ```bash
+   # Ubuntu / Debian
+   sudo apt-get install tesseract-ocr-jpn
+   
+   # macOS
+   brew install tesseract-lang
+   ```
+
+3. **PDF画像の品質を確認**
+   
+   OCRの精度は元の画像の品質に大きく依存します。以下を確認してください：
+   
+   - 解像度が十分高いか（推奨: 300 DPI以上）
+   - 文字が明瞭に読めるか
+   - 背景ノイズが少ないか
+   - 文字サイズが適切か（小さすぎないか）
+
+4. **手動でOCRエンジンを指定**
+   
+   ```bash
+   python pdf_page_text.py --pdf ./image.pdf --page 1 --engine ocr
+   ```
+
+5. **エラーメッセージを確認**
+   
+   詳細なエラーメッセージが表示される場合は、そのメッセージに従って問題を解決してください。
+
 ### pypdf がインストールできない
 
 ```bash
@@ -269,6 +367,7 @@ ls -la *.txt  # 生成されたテキストファイルを確認
 python tests/test_smoke.py           # pdf_page_text.py のテスト
 python tests/test_pdf_to_image.py    # pdf_to_image.py のテスト
 python tests/test_integration.py     # 統合テスト
+python tests/test_ocr.py             # OCR機能のテスト
 ```
 
 テストを実行するには、`reportlab` ライブラリが必要です（テスト用PDFの生成に使用）:
@@ -276,6 +375,8 @@ python tests/test_integration.py     # 統合テスト
 ```bash
 pip install reportlab
 ```
+
+OCRテストを実行するには、さらにTesseract OCRエンジンのインストールが必要です。詳細は「セットアップ」セクションを参照してください。
 
 ## PDF画像化機能（新機能）
 
