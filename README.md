@@ -12,6 +12,7 @@ PDFファイルの指定ページからテキストを抽出する CLI ツール
 - 抽出したテキストを `<元PDF名>-<ページ番号>.txt` 形式で保存
 - 日本語を含む実行結果のログ出力
 - 詳細なエラーメッセージとエラーハンドリング
+- **新機能**: PDFページを画像に変換し、画像PDFとして再構成する機能
 
 ## 必要環境
 
@@ -170,6 +171,8 @@ python pdf_page_text.py --help
 
 - **pypdf** (>=4.0.0): PDFファイルからのテキスト抽出（デフォルトエンジン）
 - **pdfminer.six** (>=20231228): 代替テキスト抽出エンジン（オプション）
+- **PyMuPDF** (>=1.24.0): PDF画像化機能用
+- **Pillow** (>=10.2.0): 画像処理・PDF生成用
 
 詳細は `requirements.txt` を参照してください。
 
@@ -263,7 +266,9 @@ ls -la *.txt  # 生成されたテキストファイルを確認
 
 ```bash
 # テストの実行
-python tests/test_smoke.py
+python tests/test_smoke.py           # pdf_page_text.py のテスト
+python tests/test_pdf_to_image.py    # pdf_to_image.py のテスト
+python tests/test_integration.py     # 統合テスト
 ```
 
 テストを実行するには、`reportlab` ライブラリが必要です（テスト用PDFの生成に使用）:
@@ -271,6 +276,85 @@ python tests/test_smoke.py
 ```bash
 pip install reportlab
 ```
+
+## PDF画像化機能（新機能）
+
+`pdf_to_image.py` を使用して、PDFファイルの各ページを画像に変換できます。この機能は、OCRテストやテキスト抽出精度の評価に役立ちます。
+
+### 基本的な使用方法
+
+```bash
+python pdf_to_image.py --pdf <PDFファイルパス> --output-dir <出力ディレクトリ> [オプション]
+```
+
+### 使用例
+
+#### 例1: PDFを画像に変換（PNG形式）
+
+```bash
+python pdf_to_image.py --pdf sample.pdf --output-dir ./images
+```
+
+各ページが `sample-page1.png`, `sample-page2.png`, ... として保存されます。
+
+#### 例2: PDFを画像に変換し、画像PDFとして再結合
+
+```bash
+python pdf_to_image.py --pdf sample.pdf --output-dir ./images --create-pdf
+```
+
+画像ファイルを作成後、それらを1つのPDF（`sample_images.pdf`）にまとめます。
+
+#### 例3: JPEG形式で保存、高解像度（300dpi）
+
+```bash
+python pdf_to_image.py --pdf sample.pdf --output-dir ./images --format jpeg --dpi 300
+```
+
+#### 例4: 特定のページ範囲のみ変換
+
+```bash
+# 3ページ目から5ページ目まで変換
+python pdf_to_image.py --pdf sample.pdf --output-dir ./images --pages 3 5
+```
+
+#### 例5: カスタムPDF名で画像PDFを作成
+
+```bash
+python pdf_to_image.py --pdf sample.pdf --output-dir ./images --create-pdf --output-pdf ./output.pdf
+```
+
+### オプション
+
+| オプション | 説明 | デフォルト |
+|-----------|------|-----------|
+| `--pdf <PDFファイルパス>` | 入力PDFファイルのパス（必須） | - |
+| `--output-dir <出力ディレクトリ>` | 画像ファイルの出力ディレクトリ（必須） | - |
+| `--format <フォーマット>` | 画像フォーマット（png, jpeg, jpg） | png |
+| `--dpi <DPI>` | 画像の解像度（72-600推奨） | 150 |
+| `--pages <開始> <終了>` | 変換するページ範囲 | 全ページ |
+| `--create-pdf` | 変換した画像を1つのPDFに結合 | 無効 |
+| `--output-pdf <出力PDFパス>` | 結合PDFの出力パス（--create-pdfと併用） | `<元PDF名>_images.pdf` |
+
+### テキスト抽出精度の比較
+
+画像化機能を使用して、テキストPDFと画像PDFのテキスト抽出結果を比較できます：
+
+```bash
+# 1. 元のテキストPDFからテキストを抽出
+python pdf_page_text.py --pdf original.pdf --page 1
+
+# 2. PDFを画像化して画像PDFを作成
+python pdf_to_image.py --pdf original.pdf --output-dir ./images --create-pdf --output-pdf image_based.pdf
+
+# 3. 画像PDFからテキストを抽出（空または限定的な結果）
+python pdf_page_text.py --pdf image_based.pdf --page 1
+
+# 4. 2つのテキストファイルを比較
+diff original-1.txt image_based-1.txt
+```
+
+画像PDFからはテキストレイヤーが除去されるため、テキスト抽出結果は空または限定的になります。これにより、OCR機能のテストやテキスト抽出精度の評価が可能になります。
 
 ## 貢献
 
