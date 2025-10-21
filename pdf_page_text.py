@@ -9,6 +9,7 @@ PDF 指定ページテキスト抽出 CLI ツール
 import argparse
 import sys
 import logging
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,14 @@ except ImportError:
     print("ERROR: pypdf ライブラリがインストールされていません。", file=sys.stderr)
     print("pip install -r requirements.txt を実行してください。", file=sys.stderr)
     sys.exit(1)
+
+# pdfminer.six は任意のエンジンとしてインポート
+try:
+    from pdfminer.high_level import extract_text as pdfminer_extract_text
+    from pdfminer.layout import LAParams
+    PDFMINER_AVAILABLE = True
+except ImportError:
+    PDFMINER_AVAILABLE = False
 
 
 def setup_logging():
@@ -59,16 +68,16 @@ def validate_pdf_file(pdf_path: Path) -> None:
         logging.warning(f"ファイル拡張子が .pdf ではありません: {pdf_path}")
 
 
-def extract_page_text(pdf_path: Path, page_number: int) -> str:
+def extract_page_text_pypdf(pdf_path: Path, page_number: int) -> str:
     """
-    PDFの指定ページからテキストを抽出
+    pypdf を使用してPDFの指定ページからテキストを抽出
     
     Args:
         pdf_path: PDFファイルのパス
         page_number: ページ番号（1始まり）
         
     Returns:
-        抽出されたテキスト
+        抽出されたテキスト（Unicode NFC正規化済み）
         
     Raises:
         ValueError: ページ番号が範囲外の場合
@@ -99,6 +108,9 @@ def extract_page_text(pdf_path: Path, page_number: int) -> str:
             logging.warning(f"ページ {page_number} にテキストが見つかりませんでした")
             return ""
         
+        # Unicode NFC正規化を適用（アキュート記号などの結合文字を正規化）
+        text = unicodedata.normalize('NFC', text)
+        
         return text
         
     except Exception as e:
@@ -106,6 +118,93 @@ def extract_page_text(pdf_path: Path, page_number: int) -> str:
             raise
         logging.error(f"PDFの読み込みまたはテキスト抽出に失敗しました: {e}")
         raise
+
+
+def extract_page_text_pdfminer(pdf_path: Path, page_number: int) -> str:
+    """
+    pdfminer.six を使用してPDFの指定ページからテキストを抽出
+    
+    Args:
+        pdf_path: PDFファイルのパス
+        page_number: ページ番号（1始まり）
+        
+    Returns:
+        抽出されたテキスト（Unicode NFC正規化済み）
+        
+    Raises:
+        ValueError: ページ番号が範囲外の場合
+        ImportError: pdfminer.six がインストールされていない場合
+        Exception: PDF読み込みやテキスト抽出に失敗した場合
+    """
+    if not PDFMINER_AVAILABLE:
+        raise ImportError(
+            "pdfminer.six がインストールされていません。\n"
+            "pip install pdfminer.six を実行してインストールしてください。"
+        )
+    
+    try:
+        # LAParams でレイアウト解析パラメータを設定
+        laparams = LAParams(
+            detect_vertical=True,
+            all_texts=True
+        )
+        
+        # ページ番号の検証（pdfminer.sixは0始まり）
+        page_index = page_number - 1
+        
+        if page_number < 1:
+            raise ValueError(f"ページ番号は1以上である必要があります: {page_number}")
+        
+        logging.info(f"{pdf_path} の {page_number} ページ目を解析中...")
+        
+        # テキスト抽出（ページ指定）
+        text = pdfminer_extract_text(
+            str(pdf_path),
+            page_numbers=[page_index],
+            laparams=laparams
+        )
+        
+        if not text or not text.strip():
+            logging.warning(f"ページ {page_number} にテキストが見つかりませんでした")
+            return ""
+        
+        # Unicode NFC正規化を適用
+        text = unicodedata.normalize('NFC', text)
+        
+        return text
+        
+    except Exception as e:
+        if isinstance(e, (ValueError, ImportError)):
+            raise
+        logging.error(f"PDFの読み込みまたはテキスト抽出に失敗しました: {e}")
+        raise
+
+
+def extract_page_text(pdf_path: Path, page_number: int, engine: str = 'pypdf') -> str:
+    """
+    PDFの指定ページからテキストを抽出（エンジン選択可能）
+    
+    Args:
+        pdf_path: PDFファイルのパス
+        page_number: ページ番号（1始まり）
+        engine: 抽出エンジン ('pypdf' または 'pdfminer')
+        
+    Returns:
+        抽出されたテキスト（Unicode NFC正規化済み）
+        
+    Raises:
+        ValueError: ページ番号が範囲外の場合、または無効なエンジン指定
+        Exception: PDF読み込みやテキスト抽出に失敗した場合
+    """
+    if engine == 'pypdf':
+        return extract_page_text_pypdf(pdf_path, page_number)
+    elif engine == 'pdfminer':
+        return extract_page_text_pdfminer(pdf_path, page_number)
+    else:
+        raise ValueError(
+            f"無効な抽出エンジンです: {engine}\n"
+            f"有効なエンジン: 'pypdf', 'pdfminer'"
+        )
 
 
 def generate_output_filename(pdf_path: Path, page_number: int) -> Path:
@@ -163,6 +262,7 @@ def parse_arguments() -> argparse.Namespace:
 使用例:
   %(prog)s --pdf ./sample.pdf --page 3
   %(prog)s --pdf document.pdf --page 1
+  %(prog)s --pdf accented.pdf --page 1 --engine pdfminer
         """
     )
     
@@ -180,6 +280,15 @@ def parse_arguments() -> argparse.Namespace:
         required=True,
         help='抽出するページ番号（1始まり）',
         metavar='<ページ番号>'
+    )
+    
+    parser.add_argument(
+        '--engine',
+        type=str,
+        choices=['pypdf', 'pdfminer'],
+        default='pypdf',
+        help='テキスト抽出エンジン（デフォルト: pypdf）。文字化けが発生する場合は pdfminer を試してください。',
+        metavar='<エンジン>'
     )
     
     return parser.parse_args()
@@ -203,6 +312,18 @@ def main() -> int:
         # PDFファイルパスの処理
         pdf_path = Path(args.pdf).resolve()
         page_number = args.page
+        engine = args.engine
+        
+        # エンジンの利用可能性チェック
+        if engine == 'pdfminer' and not PDFMINER_AVAILABLE:
+            logging.error(
+                "pdfminer エンジンが選択されましたが、pdfminer.six がインストールされていません。\n"
+                "pip install pdfminer.six を実行してインストールするか、\n"
+                "デフォルトの pypdf エンジンを使用してください（--engine pypdf または引数省略）。"
+            )
+            return 1
+        
+        logging.info(f"使用する抽出エンジン: {engine}")
         
         # ページ番号の基本検証
         if page_number < 1:
@@ -213,7 +334,7 @@ def main() -> int:
         validate_pdf_file(pdf_path)
         
         # テキスト抽出
-        text = extract_page_text(pdf_path, page_number)
+        text = extract_page_text(pdf_path, page_number, engine)
         
         # 出力ファイル名生成
         output_path = generate_output_filename(pdf_path, page_number)
@@ -234,6 +355,10 @@ def main() -> int:
         
     except PermissionError as e:
         logging.error(f"ファイルへのアクセス権限がありません: {e}")
+        return 1
+    
+    except ImportError as e:
+        logging.error(str(e))
         return 1
         
     except KeyboardInterrupt:

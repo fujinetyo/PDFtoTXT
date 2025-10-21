@@ -58,7 +58,29 @@ pip install -r requirements.txt
 ### 基本的な使用方法
 
 ```bash
-python pdf_page_text.py --pdf <PDFファイルパス> --page <ページ番号>
+python pdf_page_text.py --pdf <PDFファイルパス> --page <ページ番号> [--engine <エンジン>]
+```
+
+### 抽出エンジンについて
+
+このツールは2つのテキスト抽出エンジンをサポートしています：
+
+1. **pypdf**（デフォルト）
+   - 純Python実装で、外部依存が少ない
+   - 高速で一般的なPDFに対応
+   - 一部のPDFでアキュート記号付き文字やアポストロフィが正しく抽出できない場合がある
+
+2. **pdfminer**（`pdfminer.six` パッケージ）
+   - より高度なPDF解析機能
+   - 複雑なフォントエンコーディングやレイアウトに対応
+   - pypdfで文字化けが発生する場合の代替手段として推奨
+
+### エンジンの切り替え方法
+
+文字化けが発生する場合は、`--engine pdfminer` オプションを使用してください：
+
+```bash
+python pdf_page_text.py --pdf ./document.pdf --page 1 --engine pdfminer
 ```
 
 ### 使用例
@@ -85,7 +107,13 @@ INFO: 正常終了
 python pdf_page_text.py --pdf /path/to/documents/report.pdf --page 1
 ```
 
-#### 例3: ヘルプの表示
+#### 例3: pdfminer エンジンを使用してテキストを抽出
+
+```bash
+python pdf_page_text.py --pdf ./accented.pdf --page 1 --engine pdfminer
+```
+
+#### 例4: ヘルプの表示
 
 ```bash
 python pdf_page_text.py --help
@@ -97,6 +125,7 @@ python pdf_page_text.py --help
 |------|------|------|
 | `--pdf <PDFファイルパス>` | ✓ | 抽出元のPDFファイルのパス（相対パスまたは絶対パス） |
 | `--page <ページ番号>` | ✓ | 抽出するページ番号（1始まり） |
+| `--engine <エンジン>` | | テキスト抽出エンジン（`pypdf` または `pdfminer`）。デフォルトは `pypdf`。文字化けが発生する場合は `pdfminer` を試してください。 |
 
 ## 出力
 
@@ -128,14 +157,35 @@ python pdf_page_text.py --help
 1. **レイアウトの保持:** テキストのレイアウト（段組み、表形式など）は保持されません
 2. **画像内のテキスト:** 画像として埋め込まれたテキスト（OCRが必要なもの）は抽出できません
 3. **暗号化されたPDF:** パスワード保護されたPDFには対応していません
-4. **フォント:** 特殊なフォントや埋め込まれていないフォントの場合、正しく抽出できない可能性があります
+4. **フォント:** 特殊なフォントや埋め込まれていないフォントの場合、正しく抽出できない可能性があります。その場合は代替エンジン（`--engine pdfminer`）を試してください。
 5. **改行・空白:** 元のPDFの改行や空白は適宜変換されます
+
+### 文字エンコーディングに関する注意事項
+
+- 出力ファイルは常に **UTF-8** でエンコードされます
+- アキュート記号付き文字やアポストロフィは **Unicode NFC正規化** が適用され、環境依存の表示問題を最小限にします
+- 一部のPDFでは、フォントのエンコーディング情報が不完全な場合があります。その場合は `--engine pdfminer` を試してください
 
 ## 依存ライブラリ
 
-- **pypdf** (>=4.0.0): PDFファイルからのテキスト抽出
+- **pypdf** (>=4.0.0): PDFファイルからのテキスト抽出（デフォルトエンジン）
+- **pdfminer.six** (>=20231228): 代替テキスト抽出エンジン（オプション）
 
 詳細は `requirements.txt` を参照してください。
+
+### pdfminer.six のインストール
+
+`pdfminer.six` エンジンを使用する場合は、以下のコマンドでインストールしてください：
+
+```bash
+pip install pdfminer.six
+```
+
+または、`requirements.txt` から一括インストール：
+
+```bash
+pip install -r requirements.txt
+```
 
 ## 動作確認環境
 
@@ -144,6 +194,40 @@ python pdf_page_text.py --help
 - Windows（基本的に動作するはずですが、パスの扱いに注意が必要）
 
 ## トラブルシューティング
+
+### 文字化けが発生する場合
+
+アキュート記号付き文字（é、ñ、ö など）やアポストロフィ（'、' など）が正しく表示されない場合：
+
+1. **代替エンジンを試す**
+   ```bash
+   python pdf_page_text.py --pdf ./document.pdf --page 1 --engine pdfminer
+   ```
+
+2. **ロケール設定を確認**
+   
+   システムのロケールがUTF-8に設定されているか確認してください：
+   
+   ```bash
+   # macOS / Linux
+   locale
+   # LANG=ja_JP.UTF-8 または en_US.UTF-8 などが表示されることを確認
+   ```
+   
+   もしUTF-8ロケールが設定されていない場合：
+   
+   ```bash
+   # 一時的に設定
+   export LANG=ja_JP.UTF-8
+   export LC_ALL=ja_JP.UTF-8
+   
+   # または環境変数 PYTHONIOENCODING を設定
+   export PYTHONIOENCODING=utf-8
+   ```
+
+3. **出力ファイルの確認**
+   
+   出力ファイルは常にUTF-8でエンコードされます。テキストエディタでファイルを開く際は、UTF-8エンコーディングを指定してください。
 
 ### pypdf がインストールできない
 
