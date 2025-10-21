@@ -28,6 +28,20 @@ try:
 except ImportError:
     PDFMINER_AVAILABLE = False
 
+# OCR関連のライブラリをインポート
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    PYMUPDF_AVAILABLE = False
+
+try:
+    import pytesseract
+    from PIL import Image
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
+
 
 def setup_logging():
     """ロギング設定を初期化"""
@@ -180,14 +194,101 @@ def extract_page_text_pdfminer(pdf_path: Path, page_number: int) -> str:
         raise
 
 
-def extract_page_text(pdf_path: Path, page_number: int, engine: str = 'pypdf') -> str:
+def extract_page_text_ocr(pdf_path: Path, page_number: int, lang: str = 'jpn+eng') -> str:
     """
-    PDFの指定ページからテキストを抽出（エンジン選択可能）
+    OCR（pytesseract）を使用してPDFの指定ページからテキストを抽出
+    
+    画像形式のPDF（テキスト層を持たないPDF）からテキストを抽出する際に使用します。
     
     Args:
         pdf_path: PDFファイルのパス
         page_number: ページ番号（1始まり）
-        engine: 抽出エンジン ('pypdf' または 'pdfminer')
+        lang: OCRで使用する言語（デフォルト: 'jpn+eng'）
+        
+    Returns:
+        抽出されたテキスト（Unicode NFC正規化済み）
+        
+    Raises:
+        ValueError: ページ番号が範囲外の場合
+        ImportError: PyMuPDF または pytesseract がインストールされていない場合
+        Exception: PDF読み込みやOCR処理に失敗した場合
+    """
+    if not PYMUPDF_AVAILABLE:
+        raise ImportError(
+            "PyMuPDF (fitz) がインストールされていません。\n"
+            "pip install PyMuPDF を実行してインストールしてください。"
+        )
+    
+    if not PYTESSERACT_AVAILABLE:
+        raise ImportError(
+            "pytesseract がインストールされていません。\n"
+            "pip install pytesseract を実行してインストールしてください。\n"
+            "また、Tesseractエンジンのインストールも必要です。詳細はREADMEを参照してください。"
+        )
+    
+    try:
+        # PDFを開く
+        doc = fitz.open(str(pdf_path))
+        total_pages = len(doc)
+        
+        # ページ番号の検証（1始まりから0始まりに変換）
+        page_index = page_number - 1
+        
+        if page_index < 0 or page_index >= total_pages:
+            doc.close()
+            raise ValueError(
+                f"ページ番号が範囲外です: {page_number} "
+                f"(有効範囲: 1-{total_pages})"
+            )
+        
+        logging.info(f"{pdf_path} の {page_number} ページ目をOCRで解析中...")
+        logging.info(f"使用言語: {lang}")
+        
+        # ページを取得
+        page = doc[page_index]
+        
+        # ページを画像（pixmap）に変換（150 DPIでレンダリング）
+        zoom = 150 / 72.0  # 150 DPI
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        
+        # pixmapをPIL Imageに変換
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        
+        # OCRでテキスト抽出
+        text = pytesseract.image_to_string(img, lang=lang)
+        
+        # リソースを解放
+        doc.close()
+        
+        if not text or not text.strip():
+            logging.warning(f"ページ {page_number} からOCRでテキストを抽出できませんでした")
+            return ""
+        
+        # Unicode NFC正規化を適用
+        text = unicodedata.normalize('NFC', text)
+        
+        logging.info(f"OCRで {len(text)} 文字のテキストを抽出しました")
+        
+        return text
+        
+    except Exception as e:
+        if isinstance(e, (ValueError, ImportError)):
+            raise
+        logging.error(f"OCR処理に失敗しました: {e}")
+        raise
+
+
+def extract_page_text(pdf_path: Path, page_number: int, engine: str = 'pypdf') -> str:
+    """
+    PDFの指定ページからテキストを抽出（エンジン選択可能）
+    
+    テキスト層が検出できない場合、自動的にOCRにフォールバックします。
+    
+    Args:
+        pdf_path: PDFファイルのパス
+        page_number: ページ番号（1始まり）
+        engine: 抽出エンジン ('pypdf', 'pdfminer', または 'ocr')
         
     Returns:
         抽出されたテキスト（Unicode NFC正規化済み）
@@ -196,15 +297,48 @@ def extract_page_text(pdf_path: Path, page_number: int, engine: str = 'pypdf') -
         ValueError: ページ番号が範囲外の場合、または無効なエンジン指定
         Exception: PDF読み込みやテキスト抽出に失敗した場合
     """
+    # OCRエンジンが明示的に指定された場合
+    if engine == 'ocr':
+        return extract_page_text_ocr(pdf_path, page_number)
+    
+    # pypdf または pdfminer でテキスト抽出を試みる
     if engine == 'pypdf':
-        return extract_page_text_pypdf(pdf_path, page_number)
+        text = extract_page_text_pypdf(pdf_path, page_number)
     elif engine == 'pdfminer':
-        return extract_page_text_pdfminer(pdf_path, page_number)
+        text = extract_page_text_pdfminer(pdf_path, page_number)
     else:
         raise ValueError(
             f"無効な抽出エンジンです: {engine}\n"
-            f"有効なエンジン: 'pypdf', 'pdfminer'"
+            f"有効なエンジン: 'pypdf', 'pdfminer', 'ocr'"
         )
+    
+    # テキストが空の場合、OCRにフォールバック
+    if not text or not text.strip():
+        if PYMUPDF_AVAILABLE and PYTESSERACT_AVAILABLE:
+            logging.info("テキスト層が見つかりませんでした。OCRによる抽出を試みます...")
+            try:
+                text = extract_page_text_ocr(pdf_path, page_number)
+                if text and text.strip():
+                    logging.info("OCRでテキストを抽出しました")
+                else:
+                    logging.warning("OCRでもテキストを抽出できませんでした")
+            except Exception as e:
+                logging.warning(f"OCR処理に失敗しました: {e}")
+                # OCRが失敗した場合は、元の空のテキストを返す
+                text = ""
+        else:
+            missing_deps = []
+            if not PYMUPDF_AVAILABLE:
+                missing_deps.append("PyMuPDF")
+            if not PYTESSERACT_AVAILABLE:
+                missing_deps.append("pytesseract")
+            
+            logging.warning(
+                f"テキスト層が見つかりませんでしたが、OCR機能が利用できません。\n"
+                f"OCR機能を使用するには、以下のライブラリをインストールしてください: {', '.join(missing_deps)}"
+            )
+    
+    return text
 
 
 def generate_output_filename(pdf_path: Path, page_number: int) -> Path:
@@ -285,9 +419,9 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--engine',
         type=str,
-        choices=['pypdf', 'pdfminer'],
+        choices=['pypdf', 'pdfminer', 'ocr'],
         default='pypdf',
-        help='テキスト抽出エンジン（デフォルト: pypdf）。文字化けが発生する場合は pdfminer を試してください。',
+        help='テキスト抽出エンジン（デフォルト: pypdf）。文字化けが発生する場合は pdfminer を試してください。画像PDFの場合は ocr を使用してください。',
         metavar='<エンジン>'
     )
     
